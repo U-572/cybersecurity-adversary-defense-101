@@ -1,0 +1,373 @@
+# =============================================================================
+# Autonomous Attack Surface Management (ASM) Pipeline
+# Python Dependencies
+# =============================================================================
+#
+# Install all required third-party packages with:
+#
+#     python3 -m pip install -r requirements.txt
+#
+# NOTE:
+# asyncio is NOT listed here because it is part of Python's standard library
+# and therefore does not need to be installed separately.
+# link: https://pypi.org/project/certstream/1.0/?utm_source=chatgpt.com
+#.   ^^^^ the above link is to the 1.0 version best used as an experiment, the applicable ones
+# have seperate links at the bottom.
+# -----------------------------------------------------------------------------
+# Certificate Transparency Monitoring
+# -----------------------------------------------------------------------------
+#
+# certstream provides the Python client used by asm_pipeline.py to receive
+# Certificate Transparency events from a CertStream WebSocket service. 
+# Tl;dr it needs a library to pull from.
+# The ASM pipeline uses these events to inspect publicly observed TLS
+# certificates and identify domain names containing the configured target
+# keyword.
+#
+# Without this dependency, Python will stop at:
+#
+#     import certstream
+#
+# with:
+#
+#     ModuleNotFoundError: No module named 'certstream'
+#
+# =============================================================================
+# CERTIFICATE TRANSPARENCY DATA SOURCES
+# =============================================================================
+#
+# The ASM pipeline requires a source of Certificate Transparency (CT) data.
+#
+# Certificate Transparency logs provide public records of issued TLS
+# certificates. For attack-surface management, these records are useful
+# because newly issued certificates can reveal newly created or previously
+# unknown internet-facing domains and subdomains.
+#
+#
+# -----------------------------------------------------------------------------
+# 1. CALIDOG CERTSTREAM - SIMPLE STARTING POINT
+# -----------------------------------------------------------------------------
+#
+# Main service:
+# https://certstream.calidog.io/
+#
+# Python client:
+# https://github.com/CaliDog/certstream-python
+#
+# CaliDog's CertStream provides a relatively simple interface for consuming
+# Certificate Transparency information.
+#
+# The Python client exposes an interface similar to:
+#
+#     certstream.listen_for_events(
+#         callback,
+#         url="wss://certstream.calidog.io/"
+#     )
+#
+# This makes CertStream useful for:
+#
+#     - Learning how Certificate Transparency works
+#     - Portfolio demonstrations
+#     - Prototypes
+#     - Small CT-monitoring applications
+#
+#
+# # LAYMAN'S EXPLANATION:
+#
+# Certificate Transparency information originates from multiple public
+# certificate logs.
+#
+# Without an intermediary, our application would need considerably more
+# infrastructure to collect, parse, normalize, and process those records.
+#
+# CertStream acts as an intermediary:
+#
+#     Certificate Transparency Logs
+#                 |
+#                 v
+#         CertStream Service
+#                 |
+#                 v
+#            JSON Events
+#                 |
+#                 v
+#          asm_pipeline.py
+#
+# In other words, CertStream does much of the collection and parsing work,
+# allowing this Python program to concentrate on analyzing certificate events.
+#
+#
+# -----------------------------------------------------------------------------
+# WHY USE THE SIMPLE HOSTED VERSION?
+# -----------------------------------------------------------------------------
+#
+# For this portfolio project, simplicity is useful.
+#
+# Instead of implementing:
+#
+#     CT collection
+#          +
+#     certificate parsing
+#          +
+#     WebSocket infrastructure
+#          +
+#     ASM analysis
+#
+# all inside one project, the hosted CertStream service allows this script to
+# focus primarily on the ASM analysis and asynchronous-processing components.
+#
+# That makes the project substantially easier to understand and demonstrate.
+#
+#
+# -----------------------------------------------------------------------------
+# LIMITATIONS OF THE HOSTED APPROACH
+# -----------------------------------------------------------------------------
+#
+# The hosted CaliDog service is the SIMPLEST architecture, but it is not
+# necessarily the architecture we would choose for a larger or more mature
+# production system.
+#
+# The architecture currently looks approximately like this:
+#
+#     Public CT Logs
+#          |
+#          v
+#     CaliDog CertStream
+#          |
+#          v
+#        Internet
+#          |
+#          v
+#     asm_pipeline.py
+#
+# This introduces an external dependency.
+#
+# If the hosted service becomes:
+#
+#     - unavailable,
+#     - rate constrained,
+#     - changed,
+#     - unreliable,
+#     - or discontinued,
+#
+# the ASM pipeline can lose its certificate feed even if the Python application
+# itself is functioning correctly.
+#
+# Therefore:
+#
+#     Hosted CertStream = excellent/simple prototype dependency
+#
+# while:
+#
+#     Self-hosted CT aggregation = potentially better production architecture
+#
+#
+# =============================================================================
+# 2. CERTSTREAM-SERVER-GO - MORE ADVANCED SELF-HOSTED OPTION
+# =============================================================================
+#
+# Project:
+# https://github.com/d-Rickyy-b/certstream-server-go
+#
+# certstream-server-go provides another implementation of the CertStream server
+# concept and can be operated as self-hosted infrastructure.
+#
+# Instead of depending entirely on a public CertStream server, an organization
+# can operate its own Certificate Transparency aggregation layer.
+#
+# The architecture then becomes:
+#
+#     Certificate Transparency Logs
+#                 |
+#                 v
+#       certstream-server-go
+#                 |
+#                 v
+#         Local WebSocket Feed
+#                 |
+#                 v
+#           ASM Pipeline
+#
+#
+# -----------------------------------------------------------------------------
+# WHY WOULD WE WANT A SELF-HOSTED SOURCE?
+# -----------------------------------------------------------------------------
+#
+# 1. RELIABILITY CONTROL
+#
+# The ASM application is no longer completely dependent upon the availability
+# of one public hosted CertStream service.
+#
+#
+# 2. DATA-SOURCE CONTROL
+#
+# Operating the aggregation layer provides greater control over which
+# Certificate Transparency sources are being monitored.
+#
+#
+# 3. DIFFERENT DATA FEEDS
+#
+# A self-hosted implementation can expose different levels/forms of certificate
+# information.
+#
+# For example, an application interested primarily in domain discovery may not
+# need every field contained inside every complete certificate.
+#
+# A reduced/domain-oriented feed can therefore simplify downstream processing.
+#
+#
+# 4. INFRASTRUCTURE OWNERSHIP
+#
+# Instead of:
+#
+#     CT Logs -> somebody else's server -> our application
+#
+# the architecture becomes:
+#
+#     CT Logs -> our CT server -> our application
+#
+# This provides considerably greater control over the collection infrastructure.
+#
+#
+# 5. MONITORING
+#
+# A more mature CT collection system can expose operational metrics so the
+# collection infrastructure itself can be monitored.
+#
+# This matters because an ASM system should ideally be able to distinguish:
+#
+#     "No new certificates were discovered."
+#
+# from:
+#
+#     "Our certificate collection system stopped working."
+#
+#
+# 6. SCALABILITY
+#
+# Separating CT collection from ASM analysis creates a cleaner architecture
+# when multiple applications need Certificate Transparency information.
+#
+# For example:
+#
+#                              +--> ASM Pipeline
+#                              |
+#     CT Logs --> CT Server ---+--> Domain Monitor
+#                              |
+#                              +--> Threat Intelligence System
+#                              |
+#                              +--> Alerting Pipeline
+#
+# One internal collection service can therefore potentially provide data to
+# several security applications.
+#
+#
+# =============================================================================
+# CURRENT PORTFOLIO ARCHITECTURE
+# =============================================================================
+#
+# The current asm_pipeline.py intentionally uses the simpler architecture:
+#
+#     Public CT Logs
+#          |
+#          v
+#     CaliDog CertStream
+#          |
+#          v
+#     certstream Python Client
+#          |
+#          v
+#       ASMPipeline
+#          |
+#          v
+#      Target Filtering
+#          |
+#          v
+#     Wildcard Detection
+#          |
+#          v
+#     Candidate Generation
+#
+# This keeps the prototype understandable.
+#
+# The purpose of this portfolio implementation is primarily to demonstrate:
+#
+#     - asynchronous Python,
+#     - event-driven processing,
+#     - Certificate Transparency monitoring,
+#     - domain filtering,
+#     - wildcard certificate handling,
+#     - attack-surface management concepts,
+#     - and modular pipeline architecture.
+#
+#
+# =============================================================================
+# FUTURE / MORE MATURE ARCHITECTURE
+# =============================================================================
+#
+# A future implementation could replace the 1.0 CertStream with something fancier.
+# Like a self-hosted Certificate Transparency aggregation service.
+#
+# That architecture could look like:
+#
+#     Public CT Logs
+#          |
+#          v
+#     Self-Hosted CT Aggregator
+#          |
+#          v
+#     Internal WebSocket
+#          |
+#          v
+#       ASMPipeline
+#          |
+#          v
+#     Analysis / Storage / Alerting
+#
+#
+# -----------------------------------------------------------------------------
+# IMPORTANT ARCHITECTURAL POINT
+# -----------------------------------------------------------------------------
+#
+# The Certificate Transparency DATA SOURCE should be treated as a replaceable
+# component of the larger system.
+#
+# Conceptually:
+#
+#                      +----------------------+
+#                      |     CT DATA SOURCE   |
+#                      +----------+-----------+
+#                                 |
+#                                 v
+#                      +----------------------+
+#                      |    ASM ANALYSIS      |
+#                      +----------+-----------+
+#                                 |
+#                                 v
+#                      +----------------------+
+#                      | STORAGE / ALERTING   |
+#                      +----------------------+
+#
+# The ASM analysis layer therefore does not conceptually need to remain
+# permanently dependent upon one public CertStream provider.
+#
+#
+# =============================================================================
+# REFERENCE IMPLEMENTATIONS
+# =============================================================================
+#
+# CaliDog CertStream service:
+# https://certstream.calidog.io/
+#
+# CaliDog certstream-python client:
+# https://github.com/CaliDog/certstream-python
+#
+# certstream-server-go:
+# https://github.com/d-Rickyy-b/certstream-server-go
+#
+# NOTE:
+# These references are included so someone reviewing this portfolio can see
+# where the external CT infrastructure/client originates and investigate more
+# advanced implementations independently.
+#
+# =============================================================================
